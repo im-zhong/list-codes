@@ -1,9 +1,11 @@
 # count-code
 
 Count code and comment lines from a terminal, without VS Code. It scans one or
-more files or directories and prints totals by language. The line analyzers are
-byte-for-byte copies from [Code Count](https://github.com/im-zhong/code-count)
-at commit `7d0bdeac5fce1fcb584e8201f8b0679ed438679d` (version 0.6.0).
+more files or directories and prints totals by language. The line analyzers
+come from [Code Count](https://github.com/im-zhong/code-count) at commit
+`7d0bdeac5fce1fcb584e8201f8b0679ed438679d` (version 0.6.0). The core
+TypeScript analyzer also recognizes regex literals, including quotes inside
+them.
 
 ## Install
 
@@ -102,12 +104,13 @@ the directory where the command runs:
 
 ## Development
 
-`src/core` contains the unchanged analyzers, language table, types, and
-supporting utilities from Code Count. The new code in `src/count.ts` handles
+`src/core` contains the analyzers, language table, types, and supporting
+utilities from Code Count. The base and TypeScript analyzers include a regex
+literal fix. The new code in `src/count.ts` handles
 filesystem traversal and aggregation; `src/cli.ts` handles arguments and
 output. SQL and Shell are connected by the CLI adapter because the original
-factory omits them. Biome excludes `src/core` so formatting cannot change the
-copied bytes.
+factory omits them. Biome excludes `src/core` to preserve the upstream
+formatting in the other analyzer files.
 
 ```sh
 bun run check     # lint, typecheck, source tests, compiled binary tests

@@ -5,13 +5,22 @@ import { SQLAnalyzer } from "../src/core/analyzer/sql-analyzer";
 import { SupportedLanguage } from "../src/core/common/supported-languages";
 import { languageForPath } from "../src/languages";
 
-test("copied TypeScript analyzer distinguishes strings, code, and comments", () => {
+test("TypeScript analyzer distinguishes strings, code, and comments", () => {
   const result = newAnalyzer({
     text: 'const s = "/* no */"; // yes\n/* block\nstill */ let x = 1;',
     language: SupportedLanguage.TYPE_SCRIPT,
     absolutePath: "main.ts",
   })?.analyze();
   expect(result).toMatchObject({ codes: 2, comments: 3, lines: 3 });
+});
+
+test("TypeScript analyzer treats quotes inside regex literals as code", () => {
+  const result = newAnalyzer({
+    text: 'const re = /["]/g;\nconst value = "ok"; // note',
+    language: SupportedLanguage.TYPE_SCRIPT,
+    absolutePath: "app.ts",
+  })?.analyze();
+  expect(result).toMatchObject({ lines: 2, codes: 2, comments: 1 });
 });
 
 test("copied Python analyzer counts code cells and ignores markdown cells", () => {

@@ -51,6 +51,9 @@ export abstract class Analyzer {
           )) !== -1
         ) {
           this.stringStream.setCurrentOffset(offset);
+          if (this.skipRegexIfPresent()) {
+            continue;
+          }
           if (this.isStringHead()) {
             this.skipString();
           } else if (this.isRawStringHead()) {
@@ -82,6 +85,10 @@ export abstract class Analyzer {
       }
     }
     return -1;
+  }
+
+  protected skipRegexIfPresent(): boolean {
+    return false;
   }
 
   isStringHead(): boolean {

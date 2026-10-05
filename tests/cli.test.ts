@@ -138,6 +138,28 @@ test("SQL and Shell files are counted through the CLI", async () => {
   }
 });
 
+test("regex literals containing quotes do not make a TypeScript file fail", async () => {
+  const root = mkdtempSync(join(tmpdir(), "count-code-"));
+  try {
+    writeFileSync(join(root, "app.ts"), 'const re = /["]/g;\nconst x = "ok"; // note\n');
+    const result = await run(root, ["app.ts", "--json"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    const report = JSON.parse(result.stdout) as {
+      totals: { files: number; lines: number; code: number; comments: number; mixed: number };
+    };
+    expect(report.totals).toMatchObject({
+      files: 1,
+      lines: 3,
+      code: 2,
+      comments: 1,
+      mixed: 1,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("help and version work outside the repository", async () => {
   const root = mkdtempSync(join(tmpdir(), "count-code-"));
   try {
