@@ -1,0 +1,27 @@
+{
+  "name": "count-code",
+  "version": "0.1.0",
+  "description": "Count code, comment, and blank lines in source trees.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "bun build src/cli.ts --compile --outfile dist/count-code",
+    "lint": "biome ci .",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:compiled": "bun run build && COUNT_CODE_BIN=dist/count-code bun test",
+    "check": "bun run lint && bun run typecheck && bun test && bun run test:compiled",
+    "format": "biome check --write .",
+    "prepare": "lefthook install"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "ignore": "^5.3.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@types/bun": "^1.4.2",
+    "lefthook": "^2.1.14",
+    "typescript": "^7.0.2"
+  }
+}
