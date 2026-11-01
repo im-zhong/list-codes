@@ -1,4 +1,4 @@
-# count-code
+# lc — list codes
 
 Count code and comment lines from a terminal, without VS Code. It scans one or
 more files or directories and prints totals by language. The line analyzers
@@ -9,39 +9,47 @@ them.
 
 ## Install
 
+The release workflow builds standalone binaries for macOS x86_64, macOS arm64,
+Linux x86_64, and Linux arm64. The installer downloads the matching binary from
+the latest release to `~/.local/bin/lc`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/im-zhong/list-codes/main/install.sh | sh
+```
+
+Set `INSTALL_DIR` to select a different directory. For a local copy of
+`install.sh`, give the directory as the first argument:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/im-zhong/list-codes/main/install.sh | INSTALL_DIR="$HOME/bin" sh
+./install.sh "$HOME/bin"
+```
+
 Building from source requires [Bun](https://bun.sh):
 
 ```sh
 bun install
 bun run build
-./dist/count-code --help
-```
-
-The compiled binary is standalone. The release workflow builds macOS arm64,
-Linux arm64, and Linux x86_64 binaries. After a release is published, the
-installer downloads the matching binary to `~/.local/bin`:
-
-```sh
-./install.sh
+./dist/lc --help
 ```
 
 ## Usage
 
 ```sh
-count-code                       # scan the current directory
-count-code src tests             # scan several paths
-count-code src/main.ts           # count one file
-count-code --language python     # select one language; repeat for several
-count-code --files               # include per-file rows
-count-code --json                # machine-readable totals and per-file rows
-count-code --no-gitignore        # include files matched by .gitignore
+lc                       # scan the current directory
+lc src tests             # scan several paths
+lc src/main.ts           # count one file
+lc --language python     # select one language; repeat for several
+lc --files               # include per-file rows
+lc --json                # machine-readable totals and per-file rows
+lc --no-gitignore        # include files matched by .gitignore
 ```
 
 The CLI supports Python (`.py`, `.py.in`, `.ipynb`), TypeScript and JavaScript,
 C and C++ including CUDA, GDScript, C#, Rust, Go, Java, SQL, and shell scripts.
 It uses the original extension's language groups; for example, TypeScript and
 JavaScript appear in one row. `--language` accepts the names shown by
-`count-code --help`.
+`lc --help`.
 
 The table has these columns:
 

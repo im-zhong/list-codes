@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const repo = resolve(import.meta.dir, "..");
-const binary = process.env.COUNT_CODE_BIN
-  ? [resolve(repo, process.env.COUNT_CODE_BIN)]
+const binary = process.env.LC_BIN
+  ? [resolve(repo, process.env.LC_BIN)]
   : ["bun", resolve(repo, "src/cli.ts")];
 
 async function run(cwd: string, args: string[] = []) {
@@ -19,7 +19,7 @@ async function run(cwd: string, args: string[] = []) {
 }
 
 function fixture(): string {
-  const root = mkdtempSync(join(tmpdir(), "count-code-"));
+  const root = mkdtempSync(join(tmpdir(), "lc-"));
   mkdirSync(join(root, "src"));
   mkdirSync(join(root, "vendor"));
   writeFileSync(join(root, ".gitignore"), "*.ts\nvendor/\n");
@@ -101,6 +101,7 @@ test("invalid paths, languages, and notebooks fail with diagnostics", async () =
     const missing = await run(root, ["missing"]);
     expect(missing.exitCode).toBe(1);
     expect(missing.stdout).toBe("");
+    expect(missing.stderr).toStartWith("lc: ");
     expect(missing.stderr).toContain("Cannot access");
     expect(missing.stderr).toContain("missing");
 
@@ -120,7 +121,7 @@ test("invalid paths, languages, and notebooks fail with diagnostics", async () =
 });
 
 test("SQL and Shell files are counted through the CLI", async () => {
-  const root = mkdtempSync(join(tmpdir(), "count-code-"));
+  const root = mkdtempSync(join(tmpdir(), "lc-"));
   try {
     writeFileSync(join(root, "query.sql"), "SELECT '--'; -- note\n");
     writeFileSync(join(root, "script.sh"), "#!/bin/sh\necho hi\n");
@@ -139,7 +140,7 @@ test("SQL and Shell files are counted through the CLI", async () => {
 });
 
 test("regex literals containing quotes do not make a TypeScript file fail", async () => {
-  const root = mkdtempSync(join(tmpdir(), "count-code-"));
+  const root = mkdtempSync(join(tmpdir(), "lc-"));
   try {
     writeFileSync(join(root, "app.ts"), 'const re = /["]/g;\nconst x = "ok"; // note\n');
     const result = await run(root, ["app.ts", "--json"]);
@@ -161,16 +162,16 @@ test("regex literals containing quotes do not make a TypeScript file fail", asyn
 });
 
 test("help and version work outside the repository", async () => {
-  const root = mkdtempSync(join(tmpdir(), "count-code-"));
+  const root = mkdtempSync(join(tmpdir(), "lc-"));
   try {
     const help = await run(root, ["--help"]);
     expect(help.exitCode).toBe(0);
-    expect(help.stdout).toContain("Usage: count-code");
+    expect(help.stdout).toContain("Usage: lc");
     expect(help.stdout).toContain("--no-gitignore");
 
     const version = await run(root, ["--version"]);
     expect(version.exitCode).toBe(0);
-    expect(version.stdout.trim()).toBe("0.1.0");
+    expect(version.stdout.trim()).toBe("1.0.0");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

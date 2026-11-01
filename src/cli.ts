@@ -5,7 +5,7 @@ import { countPaths } from "./count";
 import { type Language, languages } from "./languages";
 import { renderReport } from "./report";
 
-const VERSION = "0.1.0";
+const VERSION = "1.0.0";
 
 function collectLanguage(value: string, previous: Language[]): Language[] {
   const language = languages.find((item) => item === value.toLowerCase());
@@ -16,7 +16,7 @@ function collectLanguage(value: string, previous: Language[]): Language[] {
 }
 
 const program = new Command()
-  .name("count-code")
+  .name("lc")
   .description("Count source, comment, and blank lines in files or directories.")
   .version(VERSION)
   .argument("[paths...]", "files or directories to count (default: current directory)")
@@ -49,6 +49,6 @@ const program = new Command()
 
 await program.parseAsync(process.argv).catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`count-code: ${message}`);
+  console.error(`lc: ${message}`);
   process.exitCode = 1;
 });

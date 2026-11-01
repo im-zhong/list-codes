@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "count-code",
+      "name": "lc",
       "dependencies": {
         "commander": "^15.0.0",
         "ignore": "^5.3.1",
