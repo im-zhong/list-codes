@@ -27,10 +27,16 @@ export interface LanguageCount extends Counts {
   files: number;
 }
 
+export interface SkippedFile {
+  path: string;
+  reason: string;
+}
+
 export interface Report {
   totals: Counts & { files: number };
   languages: LanguageCount[];
   files: FileCount[];
+  skipped: SkippedFile[];
 }
 
 export interface ScanOptions {
@@ -104,6 +110,7 @@ function isIgnored(path: string, directory: boolean, scopes: readonly IgnoreScop
 /**
  * Scan files or directories without a Git or VS Code dependency.
  * Explicit file paths are counted even when a .gitignore would exclude them.
+ * Files that cannot be read or analyzed are left out and listed in `skipped`.
  * Throws with the offending path when a requested root cannot be read.
  */
 export async function countPaths(options: ScanOptions): Promise<Report> {
@@ -112,34 +119,26 @@ export async function countPaths(options: ScanOptions): Promise<Report> {
   const selected = new Set(options.languages ?? languages);
   const useGitignore = options.gitignore !== false;
   const files: FileCount[] = [];
+  const skipped: SkippedFile[] = [];
   const seen = new Set<string>();
 
   async function countFile(path: string, language: Language): Promise<void> {
     if (!selected.has(language) || seen.has(path)) return;
     seen.add(path);
-    let text: string;
+    const display = relative(cwd, path).split(sep).join("/");
     try {
-      text = await readFile(path, "utf8");
-    } catch (error) {
-      throw new Error(`Cannot read ${path}: ${errorMessage(error)}`, { cause: error });
-    }
-    let result: FileResult | undefined;
-    try {
+      const text = await readFile(path, "utf8");
       const analyzer =
         language === SupportedLanguage.SQL
           ? new SQLAnalyzer({ text })
           : language === SupportedLanguage.SHELL
             ? new ShellAnalyzer({ text })
             : newAnalyzer({ text, language, absolutePath: path });
-      result = analyzer?.analyze();
+      if (!analyzer) throw new Error(`no analyzer for ${language}`);
+      files.push({ path: display, language, ...summarize(analyzer.analyzeOrThrow()) });
     } catch (error) {
-      throw new Error(`Cannot count ${path}: ${errorMessage(error)}`, { cause: error });
+      skipped.push({ path: display, reason: errorMessage(error) });
     }
-    if (!result) {
-      throw new Error(`Cannot count ${path}: analyzer returned no result.`);
-    }
-    const counts = summarize(result);
-    files.push({ path: relative(cwd, path).split(sep).join("/"), language, ...counts });
   }
 
   async function walk(directory: string, parentScopes: readonly IgnoreScope[]): Promise<void> {
@@ -203,6 +202,7 @@ export async function countPaths(options: ScanOptions): Promise<Report> {
   }
 
   files.sort((a, b) => a.path.localeCompare(b.path));
+  skipped.sort((a, b) => a.path.localeCompare(b.path));
   const totals: Report["totals"] = { files: files.length, ...zeroCounts() };
   const byLanguage = new Map<Language, LanguageCount>();
   for (const file of files) {
@@ -222,5 +222,6 @@ export async function countPaths(options: ScanOptions): Promise<Report> {
       return row ? [row] : [];
     }),
     files,
+    skipped,
   };
 }

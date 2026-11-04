@@ -40,42 +40,47 @@ export abstract class Analyzer {
 
   analyze(): FileResult | undefined {
     try {
-      this.init();
-
-      let offset = 0;
-      while (this.getLineAndResetOffset() !== undefined) {
-        while (
-          (offset = this.findFirstNotBlank(
-            this.stringStream.getCurrentLine(),
-            this.stringStream.getCurrentOffset(),
-          )) !== -1
-        ) {
-          this.stringStream.setCurrentOffset(offset);
-          if (this.skipRegexIfPresent()) {
-            continue;
-          }
-          if (this.isStringHead()) {
-            this.skipString();
-          } else if (this.isRawStringHead()) {
-            this.skipRawString();
-          } else if (this.isLineCommentHead()) {
-            this.skipLineComment();
-          } else if (this.isBlockCommentHead()) {
-            this.skipBlockComment();
-          } else {
-            this.setLineClass({ lineClass: LineClass.Code });
-            this.stringStream.addToCurrentOffset(1);
-          }
-        }
-        // to the next line
-        this.lineSpan.resetForNextLine();
-      }
-
-      return this.lineClassestoFileResult({ lineClasses: this.lineClasses });
+      return this.analyzeOrThrow();
     } catch (e) {
       // TODO: Maybe print the error message to the output channel
       return undefined;
     }
+  }
+
+  // same as analyze, but throws an error that explains why the text could not be analyzed
+  analyzeOrThrow(): FileResult {
+    this.init();
+
+    let offset = 0;
+    while (this.getLineAndResetOffset() !== undefined) {
+      while (
+        (offset = this.findFirstNotBlank(
+          this.stringStream.getCurrentLine(),
+          this.stringStream.getCurrentOffset(),
+        )) !== -1
+      ) {
+        this.stringStream.setCurrentOffset(offset);
+        if (this.skipRegexIfPresent()) {
+          continue;
+        }
+        if (this.isStringHead()) {
+          this.skipString();
+        } else if (this.isRawStringHead()) {
+          this.skipRawString();
+        } else if (this.isLineCommentHead()) {
+          this.skipLineComment();
+        } else if (this.isBlockCommentHead()) {
+          this.skipBlockComment();
+        } else {
+          this.setLineClass({ lineClass: LineClass.Code });
+          this.stringStream.addToCurrentOffset(1);
+        }
+      }
+      // to the next line
+      this.lineSpan.resetForNextLine();
+    }
+
+    return this.lineClassestoFileResult({ lineClasses: this.lineClasses });
   }
 
   findFirstNotBlank(line: string, offset: number): number {
@@ -171,7 +176,7 @@ export abstract class Analyzer {
         // if (this.stringStream.getCurrentLine().slice(-1) === "\\") {
         //   // wee need to skip the current line and continue to find the end of string in the next line
         //   if (this.getLineAndResetOffset() === undefined) {
-        //     throw new Error("find string closed but EOF");
+        //     throw new Error("string not closed before end of file");
         //   }
         // } else {
         //   throw new Error("string not closed");
@@ -181,7 +186,7 @@ export abstract class Analyzer {
         // some language support multi-line string(i.e. rust), so we just continue to the next line
         // until we find the delimiter or EOF
         if (this.getLineAndResetOffset() === undefined) {
-          throw new Error("find string closed but EOF");
+          throw new Error("string not closed before end of file");
         }
       }
     }
@@ -272,7 +277,7 @@ export abstract class Analyzer {
         .indexOf(delimiter, this.stringStream.getCurrentOffset())) === -1
     ) {
       if (this.getLineAndResetOffset() === undefined) {
-        throw new Error(`${delimiter} not closed`);
+        throw new Error(`${delimiter} not closed before end of file`);
       }
     }
     this.stringStream.setCurrentOffset(offset + delimiter.length);

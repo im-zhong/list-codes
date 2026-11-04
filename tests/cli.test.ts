@@ -95,7 +95,7 @@ test("explicit files, language selection, no-gitignore, and overlapping roots", 
   }
 });
 
-test("invalid paths, languages, and notebooks fail with diagnostics", async () => {
+test("invalid paths and languages fail; invalid notebooks are left out", async () => {
   const root = fixture();
   try {
     const missing = await run(root, ["missing"]);
@@ -111,10 +111,41 @@ test("invalid paths, languages, and notebooks fail with diagnostics", async () =
 
     writeFileSync(join(root, "bad.ipynb"), '{"cells":[{"cell_type":"code","source":42}]}');
     const notebook = await run(root, ["bad.ipynb"]);
-    expect(notebook.exitCode).toBe(1);
-    expect(notebook.stdout).toBe("");
-    expect(notebook.stderr).toContain("bad.ipynb");
-    expect(notebook.stderr).toContain("Attempted to assign to readonly property");
+    expect(notebook.exitCode).toBe(0);
+    expect(notebook.stderr).toBe("");
+    expect(notebook.stdout).toContain("No files were counted.");
+    expect(notebook.stdout).toContain("Left out 1 file that could not be counted:");
+    expect(notebook.stdout).toContain("bad.ipynb: Attempted to assign to readonly property");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("files that cannot be counted are left out and listed in the report", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lc-"));
+  try {
+    writeFileSync(join(root, "bad.gd"), 'func test():\n\tprint(r"\\\\"")\n');
+    writeFileSync(join(root, "good.gd"), "var x = 1 # note\n");
+    const result = await run(root, ["--json"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    const report = JSON.parse(result.stdout) as {
+      totals: { files: number };
+      files: Array<{ path: string }>;
+      skipped: Array<{ path: string; reason: string }>;
+    };
+    expect(report.totals.files).toBe(1);
+    expect(report.files.map((file) => file.path)).toEqual(["good.gd"]);
+    expect(report.skipped).toEqual([
+      { path: "bad.gd", reason: "string not closed before end of file" },
+    ]);
+
+    const human = await run(root);
+    expect(human.exitCode).toBe(0);
+    expect(human.stdout).toContain("Total");
+    expect(human.stdout).toEndWith(
+      "Left out 1 file that could not be counted:\n  bad.gd: string not closed before end of file\n",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -171,7 +202,7 @@ test("help and version work outside the repository", async () => {
 
     const version = await run(root, ["--version"]);
     expect(version.exitCode).toBe(0);
-    expect(version.stdout.trim()).toBe("1.0.0");
+    expect(version.stdout.trim()).toBe("1.1.0");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

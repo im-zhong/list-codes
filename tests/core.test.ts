@@ -55,6 +55,48 @@ test("copied C++ and Rust analyzers handle raw strings and lifetimes", () => {
   expect(rust).toMatchObject({ codes: 3, comments: 0 });
 });
 
+function analyzeAs(language: SupportedLanguage, text: string) {
+  return newAnalyzer({ text, language, absolutePath: `main.${language}` })?.analyze();
+}
+
+test("C++ analyzer treats digit separators as code, not character literals", () => {
+  const text = "int a = 10'000; // note\nauto b = 0x0fff'ffff'ffffU; char c = u8'x';\nint d = 1;";
+  expect(analyzeAs(SupportedLanguage.CPP, text)).toMatchObject({ lines: 3, codes: 3, comments: 1 });
+});
+
+test("C# analyzer handles interpolated, verbatim, and nested string literals", () => {
+  const nested = 'var s = $"Run: \\"{cmd}\\" {string.Join(" ", xs.Select(x => $"\\"{x}\\""))}";';
+  expect(analyzeAs(SupportedLanguage.CSHARP, `${nested}\nvar t = 1; // note`)).toMatchObject({
+    lines: 2,
+    codes: 2,
+    comments: 1,
+  });
+  expect(
+    analyzeAs(SupportedLanguage.CSHARP, 'var p = @"C:\\temp\\";\nvar t = 1; // note'),
+  ).toMatchObject({ lines: 2, codes: 2, comments: 1 });
+  expect(
+    analyzeAs(SupportedLanguage.CSHARP, 'var q = $@"{p}\\"" {{";\nvar c = \'}\'; // note'),
+  ).toMatchObject({ lines: 2, codes: 2, comments: 1 });
+});
+
+test("Shell analyzer does not treat a backslash as an escape in single quotes", () => {
+  const single = new ShellAnalyzer({ text: "sed -e '$a\\' file\necho hi # note" }).analyze();
+  expect(single).toMatchObject({ lines: 2, codes: 2, comments: 1 });
+  const ansiC = new ShellAnalyzer({ text: "echo $'it\\'s' # note" }).analyze();
+  expect(ansiC).toMatchObject({ lines: 1, codes: 1, comments: 1 });
+});
+
+test("analyzeOrThrow reports why a malformed file cannot be counted", () => {
+  const text = 'func test():\n\tprint(r"\\\\"")';
+  expect(analyzeAs(SupportedLanguage.GDSCRIPT, text)).toBeUndefined();
+  const analyzer = newAnalyzer({
+    text,
+    language: SupportedLanguage.GDSCRIPT,
+    absolutePath: "bad.gd",
+  });
+  expect(() => analyzer?.analyzeOrThrow()).toThrow("string not closed before end of file");
+});
+
 test("copied SQL and Shell analyzers are available through the CLI adapter", () => {
   expect(new SQLAnalyzer({ text: "SELECT '--'; -- note" }).analyze()).toMatchObject({
     codes: 1,

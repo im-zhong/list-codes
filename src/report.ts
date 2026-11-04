@@ -19,8 +19,26 @@ function table(
   return [render(headers), ...rows.map(render)].join("\n");
 }
 
+function renderSkipped(report: Report): string {
+  const count = report.skipped.length;
+  const lines = report.skipped.map((item) => `  ${item.path}: ${item.reason}`);
+  return [
+    `Left out ${count} ${count === 1 ? "file" : "files"} that could not be counted:`,
+    ...lines,
+  ].join("\n");
+}
+
 export function renderReport(report: Report, showFiles: boolean): string {
-  if (report.totals.files === 0) return "No supported source files found.";
+  const counted = renderCounted(report, showFiles);
+  return report.skipped.length > 0 ? `${counted}\n\n${renderSkipped(report)}` : counted;
+}
+
+function renderCounted(report: Report, showFiles: boolean): string {
+  if (report.totals.files === 0) {
+    return report.skipped.length > 0
+      ? "No files were counted."
+      : "No supported source files found.";
+  }
 
   const headers = ["Language", "Files", "Lines", "Code", "Comments", "Blank", "Mixed"];
   const rows: (string | number)[][] = report.languages.map((item) => [

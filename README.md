@@ -69,11 +69,22 @@ notebooks count code cells; markdown and outputs are excluded.
 
 Directory scans read nested `.gitignore` files, including negation rules.
 An explicit file path is counted even if ignored. Recursive scans skip
-symlinks and `.git` directories. They do not require Git. A missing or
-unreadable path produces a diagnostic on stderr and a nonzero exit code.
+symlinks and `.git` directories. They do not require Git. A missing path, or a
+directory that cannot be read, produces a diagnostic on stderr and a nonzero
+exit code.
 
-`--json` includes `totals`, `languages`, and `files`. File paths are relative to
-the directory where the command runs:
+A file that cannot be read or analyzed, for example a file with a string that
+is not closed, does not stop the scan. This also applies to a file given as an
+argument. The file is left out of the totals, the exit code stays zero, and
+the report ends with a list of the left-out files and the reason for each:
+
+```text
+Left out 1 file that could not be counted:
+  tests/errors/bad_string.gd: string not closed before end of file
+```
+
+`--json` includes `totals`, `languages`, `files`, and `skipped`. File paths are
+relative to the directory where the command runs:
 
 ```json
 {
@@ -106,6 +117,12 @@ the directory where the command runs:
       "blank": 1,
       "mixed": 1
     }
+  ],
+  "skipped": [
+    {
+      "path": "tests/errors/bad_string.gd",
+      "reason": "string not closed before end of file"
+    }
   ]
 }
 ```
@@ -114,7 +131,10 @@ the directory where the command runs:
 
 `src/core` contains the analyzers, language table, types, and supporting
 utilities from Code Count. The base and TypeScript analyzers include a regex
-literal fix. The new code in `src/count.ts` handles
+literal fix. Local fixes also handle C++ digit separators (`1'000`), C#
+interpolated and verbatim strings, and shell single quotes. The base analyzer
+adds `analyzeOrThrow()`, which reports why a file cannot be analyzed. The new
+code in `src/count.ts` handles
 filesystem traversal and aggregation; `src/cli.ts` handles arguments and
 output. SQL and Shell are connected by the CLI adapter because the original
 factory omits them. Biome excludes `src/core` to preserve the upstream

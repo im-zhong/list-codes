@@ -5,7 +5,7 @@ import { countPaths } from "./count";
 import { type Language, languages } from "./languages";
 import { renderReport } from "./report";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 
 function collectLanguage(value: string, previous: Language[]): Language[] {
   const language = languages.find((item) => item === value.toLowerCase());
