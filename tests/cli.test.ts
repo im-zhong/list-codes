@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -7,9 +15,17 @@ const repo = resolve(import.meta.dir, "..");
 const binary = process.env.LC_BIN
   ? [resolve(repo, process.env.LC_BIN)]
   : ["bun", resolve(repo, "src/cli.ts")];
+const { version } = JSON.parse(readFileSync(resolve(repo, "package.json"), "utf8")) as {
+  version: string;
+};
 
-async function run(cwd: string, args: string[] = []) {
-  const proc = Bun.spawn([...binary, ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+async function run(cwd: string, args: string[] = [], command: string[] = binary, env = {}) {
+  const proc = Bun.spawn([...command, ...args], {
+    cwd,
+    env: { ...process.env, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -200,10 +216,130 @@ test("help and version work outside the repository", async () => {
     expect(help.stdout).toContain("Usage: lc");
     expect(help.stdout).toContain("--no-gitignore");
 
-    const version = await run(root, ["--version"]);
-    expect(version.exitCode).toBe(0);
-    expect(version.stdout.trim()).toBe("1.1.0");
+    const versionRun = await run(root, ["--version"]);
+    expect(versionRun.exitCode).toBe(0);
+    expect(versionRun.stdout.trim()).toBe(version);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("self is a command group; other paths and root options work as before", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lc-"));
+  try {
+    const help = await run(root, ["--help"]);
+    expect(help.stdout).toMatch(/^Commands:\n\s+self\s+manage this lc installation$/m);
+
+    const self = await run(root, ["self", "--help"]);
+    expect(self.exitCode).toBe(0);
+    expect(self.stdout).toContain("Usage: lc self");
+    expect(self.stdout).toMatch(/^\s+update\s+replace this lc binary/m);
+
+    const bare = await run(root, ["self"]);
+    expect(bare.exitCode).toBe(1);
+    expect(bare.stderr).toContain("Usage: lc self");
+
+    const rootOption = await run(root, ["self", "update", "--json"]);
+    expect(rootOption.exitCode).toBe(1);
+    expect(rootOption.stderr).toContain("unknown option '--json'");
+
+    // a directory named self is counted when it is written as a path
+    mkdirSync(join(root, "self"));
+    writeFileSync(join(root, "self", "main.py"), "print(1)\n");
+    for (const args of [
+      ["./self", "--json"],
+      ["--json", "./self"],
+    ]) {
+      const count = await run(root, args);
+      expect(count.exitCode).toBe(0);
+      expect(JSON.parse(count.stdout).files.map((file: { path: string }) => file.path)).toEqual([
+        "self/main.py",
+      ]);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.env.LC_BIN !== undefined)(
+  "self update refuses to run from source",
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "lc-"));
+    try {
+      const result = await run(root, ["self", "update"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("lc: self update only works for an installed lc binary");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+// Serves a fake latest release whose binary for this platform is `script`.
+function serveFakeRelease(script: string) {
+  let base = "";
+  const server = Bun.serve({
+    port: 0,
+    fetch(request): Response {
+      if (new URL(request.url).pathname !== "/latest") return new Response(script);
+      const name = `lc-${process.platform}-${process.arch}`;
+      return Response.json({
+        tag_name: "v9.9.9",
+        assets: [{ name, browser_download_url: `${base}${name}` }],
+      });
+    },
+  });
+  base = server.url.href;
+  return { server, env: { LC_RELEASES_API: `${base}latest` } };
+}
+
+test.skipIf(process.env.LC_BIN === undefined)(
+  "self update replaces the compiled binary",
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "lc-"));
+    const newBinary = "#!/bin/sh\necho 9.9.9\n";
+    const { server, env } = serveFakeRelease(newBinary);
+    try {
+      const lc = join(root, "lc");
+      copyFileSync(binary[0], lc);
+      const result = await run(root, ["self", "update"], [lc], env);
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(`Updated lc from ${version} to 9.9.9.`);
+      expect(readFileSync(lc, "utf8")).toBe(newBinary);
+      expect(readdirSync(root)).toEqual(["lc"]);
+    } finally {
+      server.stop(true);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.env.LC_BIN === undefined)(
+  "stopping self update during the check removes the downloaded file",
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "lc-"));
+    const { server, env } = serveFakeRelease("#!/bin/sh\nexec sleep 30\n");
+    try {
+      const lc = join(root, "lc");
+      copyFileSync(binary[0], lc);
+      const proc = Bun.spawn([lc, "self", "update"], {
+        cwd: root,
+        env: { ...process.env, ...env },
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      while (!readdirSync(root).some((name) => name.startsWith("lc.update-"))) {
+        await Bun.sleep(20);
+      }
+      proc.kill("SIGTERM");
+      expect(await proc.exited).toBe(143);
+      expect(readdirSync(root)).toEqual(["lc"]);
+      expect(readFileSync(lc)).toEqual(readFileSync(binary[0]));
+    } finally {
+      server.stop(true);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

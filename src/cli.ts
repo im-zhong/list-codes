@@ -4,6 +4,7 @@ import { Command, InvalidArgumentError } from "commander";
 import { countPaths } from "./count";
 import { type Language, languages } from "./languages";
 import { renderReport } from "./report";
+import { installedExecutable, RELEASES_API, releaseTarget, selfUpdate } from "./update";
 
 const VERSION = "1.1.0";
 
@@ -17,6 +18,8 @@ function collectLanguage(value: string, previous: Language[]): Language[] {
 
 const program = new Command()
   .name("lc")
+  // root options such as --json are not accepted after the self subcommand
+  .enablePositionalOptions()
   .description("Count source, comment, and blank lines in files or directories.")
   .version(VERSION)
   .argument("[paths...]", "files or directories to count (default: current directory)")
@@ -45,6 +48,29 @@ const program = new Command()
     console.log(
       options.json ? JSON.stringify(report, null, 2) : renderReport(report, options.files === true),
     );
+  });
+
+const self = program
+  .command("self")
+  .description("manage this lc installation")
+  .helpCommand("help [command]", "display help");
+
+self
+  .command("update")
+  .description("replace this lc binary with the latest GitHub release")
+  .action(async () => {
+    const executable = installedExecutable();
+    if (!executable) {
+      throw new Error(
+        "self update only works for an installed lc binary. Use git pull to update a source checkout.",
+      );
+    }
+    await selfUpdate({
+      currentVersion: VERSION,
+      executable,
+      target: releaseTarget(),
+      api: process.env.LC_RELEASES_API ?? RELEASES_API,
+    });
   });
 
 await program.parseAsync(process.argv).catch((error: unknown) => {

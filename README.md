@@ -25,6 +25,21 @@ curl -fsSL https://raw.githubusercontent.com/im-zhong/list-codes/main/install.sh
 ./install.sh "$HOME/bin"
 ```
 
+To update an installed `lc` to the latest release, run:
+
+```sh
+lc self update
+```
+
+The command asks the GitHub releases API for the latest version. If that
+version is newer, it downloads the binary for your platform to a temporary file
+in the same directory as `lc`. It checks the SHA-256 digest from the release,
+if the release gives one, and it runs the new file with `--version`. Only then
+does it rename the new file over the old one. If a step fails, the installed
+`lc` does not change. You must have permission to write to the directory that
+holds `lc`. A copy that runs from source with `bun src/cli.ts` cannot update
+itself.
+
 Building from source requires [Bun](https://bun.sh):
 
 ```sh
@@ -43,7 +58,11 @@ lc --language python     # select one language; repeat for several
 lc --files               # include per-file rows
 lc --json                # machine-readable totals and per-file rows
 lc --no-gitignore        # include files matched by .gitignore
+lc self update           # update lc to the latest release
 ```
+
+`self` is a command name. To count a directory that has the name `self`, write
+`lc ./self`.
 
 The CLI supports Python (`.py`, `.py.in`, `.ipynb`), TypeScript and JavaScript,
 C and C++ including CUDA, GDScript, C#, Rust, Go, Java, SQL, and shell scripts.
@@ -133,11 +152,13 @@ relative to the directory where the command runs:
 utilities from Code Count. The base and TypeScript analyzers include a regex
 literal fix. Local fixes also handle C++ digit separators (`1'000`), C#
 interpolated and verbatim strings, and shell single quotes. The base analyzer
-adds `analyzeOrThrow()`, which reports why a file cannot be analyzed. The new
-code in `src/count.ts` handles
-filesystem traversal and aggregation; `src/cli.ts` handles arguments and
-output. SQL and Shell are connected by the CLI adapter because the original
-factory omits them. Biome excludes `src/core` to preserve the upstream
+adds `analyzeOrThrow()`, which reports why a file cannot be analyzed.
+
+The new code in `src/count.ts` handles filesystem traversal and aggregation;
+`src/cli.ts` handles arguments and output; `src/update.ts` handles
+`lc self update`. Tests set `LC_RELEASES_API` to a local server in place of the
+GitHub releases API. SQL and Shell are connected by the CLI adapter because the
+original factory omits them. Biome excludes `src/core` to preserve the upstream
 formatting in the other analyzer files.
 
 ```sh
