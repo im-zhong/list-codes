@@ -6,7 +6,7 @@ import { type Language, languages } from "./languages";
 import { renderReport } from "./report";
 import { installedExecutable, RELEASES_API, releaseTarget, selfUpdate } from "./update";
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 
 function collectLanguage(value: string, previous: Language[]): Language[] {
   const language = languages.find((item) => item === value.toLowerCase());
@@ -70,6 +70,7 @@ self
       executable,
       target: releaseTarget(),
       api: process.env.LC_RELEASES_API ?? RELEASES_API,
+      token: process.env.GH_TOKEN || process.env.GITHUB_TOKEN || undefined,
     });
   });
 

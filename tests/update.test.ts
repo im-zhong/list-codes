@@ -22,10 +22,18 @@ interface Release {
   binary?: string;
   digest?: string | null;
   assets?: string[];
+  /** HTTP status of the API response instead of the release JSON. */
   status?: number;
   downloadStatus?: number;
   /** Send part of the binary, then never finish the response. */
   stall?: boolean;
+}
+
+interface FakeGitHub {
+  api: string;
+  page: string;
+  requests: string[];
+  authorization: Record<string, string | null>;
 }
 
 const cleanups: (() => void)[] = [];
@@ -33,28 +41,34 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
 });
 
-// Serves a stand-in for the GitHub "latest release" API and its asset downloads.
-function serveRelease(release: Release) {
+// Serves a stand-in for GitHub: the "latest release" API, the /releases/latest redirect of the
+// release page, and the asset downloads, with the same paths as github.com.
+function serveRelease(release: Release): FakeGitHub {
   const requests: string[] = [];
+  const authorization: Record<string, string | null> = {};
   let base = "";
   const server = Bun.serve({
     port: 0,
     fetch(request): Response {
       const { pathname } = new URL(request.url);
       requests.push(pathname);
-      if (pathname === "/latest") {
+      authorization[pathname] = request.headers.get("authorization");
+      if (pathname === "/api/latest") {
         if (release.status) return new Response("rate limited", { status: release.status });
         const names = release.assets ?? ["lc-linux-x64", "lc-darwin-arm64"];
         return Response.json({
           tag_name: release.tag,
           assets: names.map((name) => ({
             name,
-            browser_download_url: `${base}download/${name}`,
+            browser_download_url: `${base}releases/download/${release.tag}/${name}`,
             digest: release.digest === undefined ? sha256(release.binary ?? "") : release.digest,
           })),
         });
       }
-      if (pathname.startsWith("/download/")) {
+      if (pathname === "/releases/latest") {
+        return Response.redirect(`${base}releases/tag/${release.tag}`, 302);
+      }
+      if (pathname.startsWith("/releases/download/")) {
         if (release.downloadStatus) return new Response("gone", { status: release.downloadStatus });
         if (release.stall) {
           return new Response(
@@ -68,7 +82,7 @@ function serveRelease(release: Release) {
   });
   base = server.url.href;
   cleanups.push(() => server.stop(true));
-  return { api: `${base}latest`, requests };
+  return { api: `${base}api/latest`, page: `${base}releases`, requests, authorization };
 }
 
 function installed(): { directory: string; executable: string } {
@@ -79,13 +93,15 @@ function installed(): { directory: string; executable: string } {
   return { directory, executable };
 }
 
-async function update(api: string, executable: string) {
+async function update(github: FakeGitHub, executable: string, token?: string) {
   const messages: string[] = [];
   await selfUpdate({
     currentVersion: "1.1.0",
     executable,
     target: "linux-x64",
-    api,
+    api: github.api,
+    page: github.page,
+    token,
     log: (message: string) => messages.push(message),
     downloadTimeoutMs: 500,
     checkTimeoutMs: 500,
@@ -110,31 +126,31 @@ test("releaseTarget maps supported platforms to release asset suffixes", () => {
 
 test("an up-to-date or newer lc does not download the release binary", async () => {
   for (const tag of ["v1.1.0", "v1.0.0"]) {
-    const { api, requests } = serveRelease({ tag, binary: newBinary });
+    const github = serveRelease({ tag, binary: newBinary });
     const { executable } = installed();
-    expect(await update(api, executable)).toEqual(["lc 1.1.0 is already the latest version."]);
-    expect(requests).toEqual(["/latest"]);
+    expect(await update(github, executable)).toEqual(["lc 1.1.0 is already the latest version."]);
+    expect(github.requests).toEqual(["/api/latest"]);
     expect(readFileSync(executable, "utf8")).toBe(oldBinary);
   }
 });
 
 test("a newer release replaces the executable after it is verified", async () => {
-  const { api, requests } = serveRelease({ tag: "v1.2.0", binary: newBinary });
+  const github = serveRelease({ tag: "v1.2.0", binary: newBinary });
   const { directory, executable } = installed();
-  expect(await update(api, executable)).toEqual([
+  expect(await update(github, executable)).toEqual([
     "Downloading lc 1.2.0 (linux-x64)...",
     "Updated lc from 1.1.0 to 1.2.0.",
   ]);
-  expect(requests).toEqual(["/latest", "/download/lc-linux-x64"]);
+  expect(github.requests).toEqual(["/api/latest", "/releases/download/v1.2.0/lc-linux-x64"]);
   expect(readFileSync(executable, "utf8")).toBe(newBinary);
   expect(statSync(executable).mode & 0o777).toBe(0o755);
   expect(readdirSync(directory)).toEqual(["lc"]);
 });
 
 test("a release without a digest is still verified by its version output", async () => {
-  const { api } = serveRelease({ tag: "v1.2.0", binary: newBinary, digest: null });
+  const github = serveRelease({ tag: "v1.2.0", binary: newBinary, digest: null });
   const { executable } = installed();
-  await update(api, executable);
+  await update(github, executable);
   expect(readFileSync(executable, "utf8")).toBe(newBinary);
 });
 
@@ -147,7 +163,7 @@ test("a failed check leaves the installed executable unchanged", async () => {
     [{ tag: "v1.2.0", binary: oldBinary }, "reports version 1.1.0, expected 1.2.0"],
     [{ tag: "v1.2.0", binary: newBinary, assets: ["lc-darwin-arm64"] }, "has no lc-linux-x64"],
     [{ tag: "nightly", binary: newBinary }, "not a version: nightly"],
-    [{ tag: "v1.2.0", status: 403 }, "HTTP 403"],
+    [{ tag: "v1.2.0", status: 500 }, "HTTP 500"],
     [{ tag: "v1.2.0", binary: newBinary, downloadStatus: 404 }, "download lc-linux-x64: HTTP 404"],
     [{ tag: "v1.2.0", binary: newBinary, stall: true }, "Cannot download lc-linux-x64"],
     [{ tag: "v1.2.0", binary: newBinary, digest: "md5:abc" }, "unsupported digest"],
@@ -155,9 +171,9 @@ test("a failed check leaves the installed executable unchanged", async () => {
     [{ tag: "v1.2.0", binary: "#!/bin/sh\nexec sleep 30\n" }, "did not finish"],
   ];
   for (const [release, message] of cases) {
-    const { api } = serveRelease(release);
+    const github = serveRelease(release);
     const { directory, executable } = installed();
-    const error = await update(api, executable).then(
+    const error = await update(github, executable).then(
       () => new Error("update did not fail"),
       (reason: unknown) => reason,
     );
@@ -170,16 +186,52 @@ test("a failed check leaves the installed executable unchanged", async () => {
 test.skipIf(process.getuid?.() === 0)(
   "a directory without write permission fails before the download",
   async () => {
-    const { api, requests } = serveRelease({ tag: "v1.2.0", binary: newBinary });
+    const github = serveRelease({ tag: "v1.2.0", binary: newBinary });
     const { directory, executable } = installed();
     chmodSync(directory, 0o555);
     try {
-      const error = await update(api, executable).catch((reason: unknown) => reason);
+      const error = await update(github, executable).catch((reason: unknown) => reason);
       expect(String(error)).toContain(`no permission to write to ${directory}`);
-      expect(requests).toEqual(["/latest"]);
+      expect(github.requests).toEqual(["/api/latest"]);
       expect(readFileSync(executable, "utf8")).toBe(oldBinary);
     } finally {
       chmodSync(directory, 0o755);
     }
   },
 );
+
+test("a rate-limited API falls back to the release page without a digest", async () => {
+  for (const status of [403, 429]) {
+    const github = serveRelease({ tag: "v1.2.0", binary: newBinary, status });
+    const { executable } = installed();
+    const messages = await update(github, executable);
+    expect(messages[0]).toContain(`The GitHub API refused the request (HTTP ${status})`);
+    expect(messages.slice(1)).toEqual([
+      "Downloading lc 1.2.0 (linux-x64)...",
+      "Updated lc from 1.1.0 to 1.2.0.",
+    ]);
+    expect(github.requests).toEqual([
+      "/api/latest",
+      "/releases/latest",
+      "/releases/download/v1.2.0/lc-linux-x64",
+    ]);
+    expect(readFileSync(executable, "utf8")).toBe(newBinary);
+  }
+
+  // the --version check still protects the fallback path
+  const github = serveRelease({ tag: "v1.2.0", binary: oldBinary, status: 403 });
+  const { executable } = installed();
+  const error = await update(github, executable).catch((reason: unknown) => reason);
+  expect(String(error)).toContain("reports version 1.1.0, expected 1.2.0");
+  expect(readFileSync(executable, "utf8")).toBe(oldBinary);
+});
+
+test("a token is sent to the API but not to the download", async () => {
+  const github = serveRelease({ tag: "v1.2.0", binary: newBinary });
+  const { executable } = installed();
+  await update(github, executable, "secret");
+  expect(github.authorization).toEqual({
+    "/api/latest": "Bearer secret",
+    "/releases/download/v1.2.0/lc-linux-x64": null,
+  });
+});

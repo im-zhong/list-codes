@@ -40,6 +40,13 @@ does it rename the new file over the old one. If a step fails, the installed
 holds `lc`. A copy that runs from source with `bun src/cli.ts` cannot update
 itself.
 
+Without a token, the GitHub API accepts only 60 requests per hour from one IP
+address. If `GH_TOKEN` or `GITHUB_TOKEN` is set, `lc self update` sends it to
+the API, and the limit is 5000 requests per hour. The token is not sent with
+the download. If the API refuses the request, `lc self update` gets the latest
+version from the release page. In that case, no SHA-256 digest is available,
+so the `--version` check is the only check.
+
 Building from source requires [Bun](https://bun.sh):
 
 ```sh

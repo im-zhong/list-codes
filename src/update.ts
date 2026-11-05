@@ -4,6 +4,7 @@ import { access, chmod, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export const RELEASES_API = "https://api.github.com/repos/im-zhong/list-codes/releases/latest";
+export const RELEASES_PAGE = "https://github.com/im-zhong/list-codes/releases";
 
 const TARGETS = new Set(["darwin-x64", "darwin-arm64", "linux-x64", "linux-arm64"]);
 
@@ -18,11 +19,22 @@ interface Release {
   assets: ReleaseAsset[];
 }
 
+interface LatestBinary {
+  tag: string;
+  /** undefined when the release has no binary for the target */
+  url?: string;
+  digest?: string | null;
+}
+
 export interface SelfUpdateOptions {
   currentVersion: string;
   executable: string;
   target: string;
   api?: string;
+  /** The release page, used when the API refuses the request, i.e. at its rate limit. */
+  page?: string;
+  /** A GitHub token for the API, which raises the rate limit from 60 to 5000 per hour. */
+  token?: string;
   log?: (message: string) => void;
   /** Time limit for the binary download. */
   downloadTimeoutMs?: number;
@@ -61,7 +73,12 @@ export function installedExecutable(): string | undefined {
   return Bun.main.startsWith("/$bunfs/") ? process.execPath : undefined;
 }
 
-async function fetchOk(url: string, what: string, init?: RequestInit): Promise<Response> {
+async function fetchOk(
+  url: string,
+  what: string,
+  init?: RequestInit,
+  accepted: readonly number[] = [],
+): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(url, init);
@@ -69,7 +86,7 @@ async function fetchOk(url: string, what: string, init?: RequestInit): Promise<R
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Cannot ${what}: ${message}`, { cause: error });
   }
-  if (!response.ok) {
+  if (!response.ok && !accepted.includes(response.status)) {
     throw new Error(`Cannot ${what}: HTTP ${response.status} from ${url}`);
   }
   return response;
@@ -110,6 +127,59 @@ async function removeOnSignal<T>(path: string, work: () => Promise<T>): Promise<
 }
 
 /**
+ * Find the latest release and the URL and digest of the binary `name`.
+ * The API gives the SHA-256 digest, but allows only 60 requests per hour for each IP address
+ * without a token. When it refuses the request, the tag comes from the redirect of the release
+ * page instead, and the binary has no digest; the --version check still applies.
+ */
+async function findLatest({
+  api,
+  page,
+  token,
+  name,
+  userAgent,
+  log,
+}: {
+  api: string;
+  page: string;
+  token?: string;
+  name: string;
+  userAgent: string;
+  log: (message: string) => void;
+}): Promise<LatestBinary> {
+  const what = "check the latest release";
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": userAgent,
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const signal = AbortSignal.timeout(30_000);
+  const response = await fetchOk(api, what, { headers, signal }, [403, 429]);
+  if (response.ok) {
+    const release = (await response.json()) as Release;
+    const asset = release.assets.find((item) => item.name === name);
+    return { tag: release.tag_name, url: asset?.browser_download_url, digest: asset?.digest };
+  }
+
+  log(
+    `The GitHub API refused the request (HTTP ${response.status}), probably at its rate limit. ` +
+      "Using the release page instead, without a SHA-256 digest. Set GH_TOKEN to use the API.",
+  );
+  const redirect = await fetchOk(
+    `${page}/latest`,
+    what,
+    { headers: { "User-Agent": userAgent }, redirect: "manual", signal },
+    [301, 302, 303, 307, 308],
+  );
+  const location = redirect.headers.get("location") ?? "";
+  const tag = new URL(location, page).pathname.match(/\/releases\/tag\/([^/]+)$/)?.[1];
+  if (!tag) {
+    throw new Error(`Cannot ${what}: ${page}/latest does not redirect to a release tag.`);
+  }
+  return { tag: decodeURIComponent(tag), url: `${page}/download/${tag}/${name}` };
+}
+
+/**
  * Replace `executable` with the latest release binary for `target`.
  * The download goes to a temporary file in the same directory, is verified by its SHA-256
  * digest (when the release lists one) and by its --version output, and then is renamed over
@@ -121,33 +191,29 @@ export async function selfUpdate(options: SelfUpdateOptions): Promise<void> {
     executable,
     target,
     api = RELEASES_API,
+    page = RELEASES_PAGE,
+    token,
     log = console.log,
     downloadTimeoutMs = 600_000,
     checkTimeoutMs = 10_000,
   } = options;
   const userAgent = `lc/${currentVersion}`;
-  const response = await fetchOk(api, "check the latest release", {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": userAgent },
-    signal: AbortSignal.timeout(30_000),
-  });
-  const release = (await response.json()) as Release;
-  const latest = release.tag_name.replace(/^v/, "");
+  const name = `lc-${target}`;
+  const release = await findLatest({ api, page, token, name, userAgent, log });
+  const latest = release.tag.replace(/^v/, "");
   if (!/^\d+\.\d+\.\d+$/.test(latest)) {
-    throw new Error(`The latest release tag is not a version: ${release.tag_name}`);
+    throw new Error(`The latest release tag is not a version: ${release.tag}`);
   }
   if (compareVersions(latest, currentVersion) <= 0) {
     log(`lc ${currentVersion} is already the latest version.`);
     return;
   }
-
-  const name = `lc-${target}`;
-  const asset = release.assets.find((item) => item.name === name);
-  if (!asset) {
-    throw new Error(`Release ${release.tag_name} has no ${name} binary.`);
+  if (!release.url) {
+    throw new Error(`Release ${release.tag} has no ${name} binary.`);
   }
-  if (asset.digest && !asset.digest.startsWith("sha256:")) {
+  if (release.digest && !release.digest.startsWith("sha256:")) {
     throw new Error(
-      `Release ${release.tag_name} has an unsupported digest for ${name}: ${asset.digest}`,
+      `Release ${release.tag} has an unsupported digest for ${name}: ${release.digest}`,
     );
   }
 
@@ -164,7 +230,7 @@ export async function selfUpdate(options: SelfUpdateOptions): Promise<void> {
   log(`Downloading lc ${latest} (${target})...`);
   let bytes: Uint8Array;
   try {
-    const download = await fetchOk(asset.browser_download_url, `download ${name}`, {
+    const download = await fetchOk(release.url, `download ${name}`, {
       headers: { Accept: "application/octet-stream", "User-Agent": userAgent },
       signal: AbortSignal.timeout(downloadTimeoutMs),
     });
@@ -178,9 +244,9 @@ export async function selfUpdate(options: SelfUpdateOptions): Promise<void> {
       },
     );
   }
-  if (asset.digest) {
+  if (release.digest) {
     const actual = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-    if (actual !== asset.digest) {
+    if (actual !== release.digest) {
       throw new Error(`The SHA-256 of ${name} does not match the release: ${actual}`);
     }
   }
